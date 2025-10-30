@@ -11,6 +11,9 @@
   <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
 
+  <!-- Adexora Ads Script -->
+  <script src="https://adexora.com/cdn/ads.js?id=648"></script>
+
   <style>
     :root {
       --bg-color: #121212;
@@ -22,6 +25,8 @@
       --hover-bg-color: #333;
       --scrollbar-thumb-color: #555;
       --scrollbar-track-color: var(--primary-surface-color);
+      --locked-overlay-color: rgba(0, 0, 0, 0.6);
+      --lock-icon-color: #fff;
     }
 
     html, body {
@@ -123,6 +128,7 @@
       border-radius: 8px;
       transition: background-color 0.2s ease-in-out;
       border: 2px solid transparent;
+      position: relative;
     }
 
     .video-card:hover {
@@ -132,6 +138,29 @@
     .video-card.active {
       background-color: var(--secondary-surface-color);
       border-color: var(--accent-color);
+    }
+    
+    /* Locked Video Styles */
+    .video-card.locked .thumbnail-container::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: var(--locked-overlay-color);
+        border-radius: 8px;
+        z-index: 1;
+    }
+    .video-card.locked .thumbnail-container::after {
+        content: '🔒';
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        font-size: 24px;
+        color: var(--lock-icon-color);
+        z-index: 2;
     }
 
     .thumbnail-container {
@@ -151,7 +180,14 @@
         border-radius: 4px;
         font-size: 10px;
         font-weight: 700;
+        z-index: 3;
     }
+
+    /* Ensure active card doesn't show lock icon */
+    .video-card.active.locked .thumbnail-container::after {
+        content: '▶ এখন চলছে';
+    }
+
 
     .thumbnail-container img {
       width: 100%;
@@ -171,6 +207,7 @@
       border-radius: 4px;
       font-size: 12px;
       font-weight: 500;
+      z-index: 3;
     }
     
     .video-card.active .video-duration {
@@ -201,6 +238,82 @@
       color: var(--text-secondary);
     }
 
+    /* Unlock Modal Styles */
+    .unlock-modal-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.7);
+        display: none;
+        justify-content: center;
+        align-items: center;
+        z-index: 1000;
+    }
+    
+    .unlock-modal {
+        background-color: var(--primary-surface-color);
+        padding: 24px;
+        border-radius: 12px;
+        text-align: center;
+        width: 90%;
+        max-width: 350px;
+        border: 1px solid var(--secondary-surface-color);
+    }
+
+    .unlock-modal h3 {
+        margin-top: 0;
+        color: var(--text-primary);
+    }
+    
+    .unlock-modal p {
+        color: var(--text-secondary);
+        margin-bottom: 20px;
+    }
+    
+    .unlock-modal .ad-progress {
+        font-weight: 700;
+        color: var(--accent-color);
+        font-size: 1.1rem;
+        margin-bottom: 24px;
+    }
+    
+    .unlock-modal button {
+        width: 100%;
+        padding: 12px;
+        border: none;
+        border-radius: 8px;
+        font-family: 'Hind Siliguri', sans-serif;
+        font-size: 1rem;
+        cursor: pointer;
+        transition: background-color 0.2s;
+    }
+    
+    .watch-ad-btn {
+        background-color: var(--accent-color);
+        color: white;
+        margin-bottom: 10px;
+    }
+    
+    .watch-ad-btn:hover {
+        background-color: #3592e2;
+    }
+
+    .watch-ad-btn:disabled {
+        background-color: #555;
+        cursor: not-allowed;
+    }
+    
+    .close-modal-btn {
+        background-color: var(--secondary-surface-color);
+        color: var(--text-primary);
+    }
+    
+    .close-modal-btn:hover {
+        background-color: var(--hover-bg-color);
+    }
+
     /* Custom Scrollbar */
     .playlist-section::-webkit-scrollbar {
       width: 8px;
@@ -214,7 +327,7 @@
       border: 2px solid var(--scrollbar-track-color);
     }
 
-    /* Responsive adjustments for smaller screens */
+    /* Responsive adjustments */
     @media (max-width: 850px) {
       .app-container {
         flex-direction: column;
@@ -252,11 +365,24 @@
     </div>
   </div>
 
+  <!-- Unlock Modal HTML -->
+  <div class="unlock-modal-overlay" id="unlock-modal-overlay">
+      <div class="unlock-modal">
+          <h3 id="modal-video-title">ভিডিও আনলক করুন</h3>
+          <p>এই ভিডিওটি দেখতে অনুগ্রহ করে ৫টি বিজ্ঞাপন দেখুন।</p>
+          <div class="ad-progress" id="ad-progress">দেখা হয়েছে: 0/5</div>
+          <button class="watch-ad-btn" id="watch-ad-btn">বিজ্ঞাপন দেখুন</button>
+          <button class="close-modal-btn" id="close-modal-btn">বন্ধ করুন</button>
+      </div>
+  </div>
+
   <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
   <script>
     const VideoPlayerApp = {
       config: {
-        videos: [] // This will be loaded from Firebase
+        videos: [],
+        adsToUnlock: 5,
+        unlockDurationHours: 4 
       },
       
       firebaseConfig: {
@@ -273,7 +399,8 @@
         currentHlsInstance: null,
         activeVideoElement: null,
         lastTap: 0,
-        telegramUser: null
+        telegramUser: null,
+        unlockingVideoIndex: null
       },
 
       elements: {
@@ -281,13 +408,25 @@
         videoFeed: document.getElementById('video-feed'),
         loginScreen: document.getElementById('login-screen'),
         appContainer: document.getElementById('app-container'),
-        welcomeMessage: document.getElementById('welcome-message')
+        welcomeMessage: document.getElementById('welcome-message'),
+        // Modal elements
+        unlockModalOverlay: document.getElementById('unlock-modal-overlay'),
+        modalVideoTitle: document.getElementById('modal-video-title'),
+        adProgress: document.getElementById('ad-progress'),
+        watchAdBtn: document.getElementById('watch-ad-btn'),
+        closeModalBtn: document.getElementById('close-modal-btn'),
       },
       
       init() {
         this.handleTelegramLogin();
+        this.addModalListeners();
       },
       
+      addModalListeners() {
+        this.elements.watchAdBtn.onclick = () => this.handleWatchAd();
+        this.elements.closeModalBtn.onclick = () => this.hideUnlockModal();
+      },
+
       handleTelegramLogin() {
           const tg = window.Telegram.WebApp;
           tg.ready();
@@ -295,28 +434,24 @@
           if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
               this.state.telegramUser = tg.initDataUnsafe.user;
               this.elements.welcomeMessage.innerText = `স্বাগতম, ${this.state.telegramUser.first_name}!`;
-              console.log("Logged in user:", this.state.telegramUser);
               this.initializeFirebase();
           } else {
               this.elements.loginScreen.innerHTML = `<div class="error-message">টেলিগ্রাম ব্যবহারকারীর তথ্য পাওয়া যায়নি। দয়া করে টেলিগ্রাম অ্যাপ থেকে খুলুন।</div>`;
-              console.error("Telegram user data not found.");
           }
       },
       
       initializeFirebase() {
         firebase.initializeApp(this.firebaseConfig);
         const db = firebase.database();
-        const videosRef = db.ref('/videos'); // Assumes your videos are stored in a 'videos' node
+        const videosRef = db.ref('/videos');
 
         videosRef.on('value', (snapshot) => {
             const data = snapshot.val();
             if (data && Array.isArray(data)) {
-                // Filter out any null/empty entries from Firebase
                 this.config.videos = data.filter(video => video && video.url);
                 this.showApp();
             } else {
                 this.elements.loginScreen.innerHTML = `<div class="error-message">ডাটাবেস থেকে কোনো ভিডিও খুঁজে পাওয়া যায়নি।</div>`;
-                console.error("No video data found in Firebase or data is not an array.");
             }
         }, (error) => {
             this.elements.loginScreen.innerHTML = `<div class="error-message">ডাটাবেস সংযোগে সমস্যা হয়েছে।</div>`;
@@ -343,7 +478,13 @@
           if (!video.url) return;
           const card = document.createElement('div');
           card.className = 'video-card';
-          card.onclick = () => this.loadVideo(index, true);
+
+          const isLocked = this.isVideoLocked(index);
+          if (isLocked) {
+              card.classList.add('locked');
+          }
+
+          card.onclick = () => this.handleVideoClick(index);
           card.innerHTML = `
             <div class="thumbnail-container">
               <img src="${video.thumbnail}" alt="${video.title}" loading="lazy">
@@ -355,6 +496,14 @@
             </div>`;
           this.elements.videoFeed.appendChild(card);
         });
+      },
+      
+      handleVideoClick(index) {
+          if (this.isVideoLocked(index)) {
+              this.showUnlockModal(index);
+          } else {
+              this.loadVideo(index, true);
+          }
       },
 
       loadVideo(index, autoplay = false) {
@@ -383,7 +532,7 @@
         const urlObj = new URL(url);
         if (autoplay) {
             urlObj.searchParams.set('autoplay', '1');
-            urlObj.searchParams.set('muted', '1'); // Mute for autoplay in iframes
+            urlObj.searchParams.set('muted', '1');
         }
         iframe.src = urlObj.toString();
         iframe.allow = 'autoplay; fullscreen; picture-in-picture';
@@ -425,8 +574,8 @@
       createVideoElement(autoplay) {
         const video = document.createElement('video');
         video.autoplay = autoplay;
-        video.muted = true; // IMPORTANT for autoplay to work
-        video.playsInline = true; // Important for iOS
+        video.muted = true;
+        video.playsInline = true;
         video.controls = true;
         video.preload = 'metadata'; 
         return video;
@@ -442,9 +591,9 @@
                 const rect = e.target.getBoundingClientRect();
                 const tapPosition = (e.changedTouches[0].clientX - rect.left) / rect.width;
 
-                if (tapPosition > 0.5) { // ডান দিকে ট্যাপ
+                if (tapPosition > 0.5) {
                     this.state.activeVideoElement.currentTime += 10;
-                } else { // বাম দিকে ট্যাপ
+                } else {
                     this.state.activeVideoElement.currentTime -= 10;
                 }
                 e.preventDefault();
@@ -466,6 +615,96 @@
           direct: /\.(mp4|webm|ogg)(\?|$)/i
         };
         return patterns[type] ? patterns[type].test(url) : false;
+      },
+
+      // --- Unlock Logic ---
+
+      isVideoLocked(index) {
+        if (index === 0) return false; // First video is always free
+
+        const videoStatus = this.getVideoStatus(index);
+        if (!videoStatus.unlocked) return true;
+
+        const now = new Date().getTime();
+        const unlockTime = videoStatus.timestamp;
+        const expiryTime = this.config.unlockDurationHours * 60 * 60 * 1000;
+        
+        return (now - unlockTime) > expiryTime;
+      },
+
+      getVideoStatus(index) {
+          try {
+              const status = JSON.parse(localStorage.getItem(`video_${index}_status`));
+              return status || { unlocked: false, timestamp: 0 };
+          } catch (e) {
+              return { unlocked: false, timestamp: 0 };
+          }
+      },
+
+      setVideoUnlocked(index) {
+          const status = { unlocked: true, timestamp: new Date().getTime() };
+          localStorage.setItem(`video_${index}_status`, JSON.stringify(status));
+          // Reset ad count after successful unlock
+          localStorage.setItem(`video_${index}_ad_count`, '0');
+      },
+
+      getAdCount(index) {
+          return parseInt(localStorage.getItem(`video_${index}_ad_count`) || '0', 10);
+      },
+
+      setAdCount(index, count) {
+          localStorage.setItem(`video_${index}_ad_count`, count);
+      },
+
+      showUnlockModal(index) {
+          this.state.unlockingVideoIndex = index;
+          const adCount = this.getAdCount(index);
+          
+          this.elements.modalVideoTitle.innerText = this.config.videos[index].title;
+          this.elements.adProgress.innerText = `দেখা হয়েছে: ${adCount}/${this.config.adsToUnlock}`;
+          this.elements.unlockModalOverlay.style.display = 'flex';
+          this.elements.watchAdBtn.disabled = false;
+          this.elements.watchAdBtn.innerText = 'বিজ্ঞাপন দেখুন';
+      },
+      
+      hideUnlockModal() {
+          this.elements.unlockModalOverlay.style.display = 'none';
+          this.state.unlockingVideoIndex = null;
+      },
+      
+      handleWatchAd() {
+          const index = this.state.unlockingVideoIndex;
+          if (index === null) return;
+
+          this.elements.watchAdBtn.disabled = true;
+          this.elements.watchAdBtn.innerText = 'বিজ্ঞাপন লোড হচ্ছে...';
+
+          window.showAdexora()
+            .then(() => {
+                // Ad watched successfully
+                const currentCount = this.getAdCount(index);
+                const newCount = currentCount + 1;
+                this.setAdCount(index, newCount);
+
+                this.elements.adProgress.innerText = `দেখা হয়েছে: ${newCount}/${this.config.adsToUnlock}`;
+
+                if (newCount >= this.config.adsToUnlock) {
+                    this.setVideoUnlocked(index);
+                    this.hideUnlockModal();
+                    this.renderVideoFeed(); // Re-render to show unlocked status
+                    this.loadVideo(index, true);
+                } else {
+                    this.elements.watchAdBtn.disabled = false;
+                    this.elements.watchAdBtn.innerText = 'আবার বিজ্ঞাপন দেখুন';
+                }
+            })
+            .catch(e => {
+                // Ad failed
+                alert("বিজ্ঞাপনটি লোড হতে ব্যর্থ হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।");
+                this.elements.watchAdBtn.disabled = false;
+                this.elements.watchAdBtn.innerText = 'বিজ্ঞাপন দেখুন';
+                console.error("Ad error:", e);
+            });
       }
     };
 
